@@ -14,7 +14,7 @@ O estudo analisa a dinâmica espaço-temporal e as desigualdades sociodemográfi
 ## Autor
 
 **Pedro Omar Batista Pereira**
-Bioestatístico | Universidade Federal do Acre (UFAC)
+| Bioestatístico | Universidade Federal do Acre (UFAC)
 📧 pedro.omar@sou.ufac.br
 
 ---
