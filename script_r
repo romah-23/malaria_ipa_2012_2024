@@ -1,0 +1,537 @@
+# ==============================================================================
+# Manuscrito: Malária na Amazônica Ocidental: Dinâmica Espaço-Temporal e Desigualdades (2012-2024)
+# PARTE 1 — Análise espaço-temporal
+#
+# Repositório: https://github.com/romah-23/malaria_ipa_2012_2024
+#
+# INSTRUÇÕES DE USO:
+# 1. Execute este script a partir de qualquer diretório local.
+# 2. O script baixa automaticamente os dados do repositório GitHub,
+#    processa as análises e salva os resultados na pasta
+#    "resultados_malaria" no seu diretório de trabalho atual.
+# 3. Não é necessário baixar nada manualmente.
+#
+# DEPENDÊNCIAS:
+# install.packages(c("sf","tidyverse","geobr","ggplot2","abjutils",
+#                    "gridExtra","grid","prais","dplyr","tidyr"))
+# ==============================================================================
+
+library(sf)
+library(tidyverse)
+library(geobr)
+library(ggplot2)
+library(abjutils)
+library(gridExtra)
+library(grid)
+library(prais)
+library(dplyr)
+library(tidyr)
+
+# ==============================================================================
+# 0. DOWNLOAD AUTOMÁTICO DO REPOSITÓRIO
+# ==============================================================================
+
+repo_url <- "https://github.com/romah-23/malaria_ipa_2012_2024/archive/refs/heads/main.zip"
+
+tmp_zip  <- tempfile(fileext = ".zip")
+tmp_dir  <- file.path(tempdir(), "malaria_repo")
+if (!dir.exists(tmp_dir)) dir.create(tmp_dir, recursive = TRUE)
+
+message("Baixando dados do repositório GitHub...")
+download.file(repo_url, tmp_zip, mode = "wb", quiet = FALSE)
+
+message("Descompactando...")
+unzip(tmp_zip, exdir = tmp_dir, overwrite = TRUE)
+
+# Raiz do repositório descompactado
+repo_dir <- file.path(tmp_dir, "malaria_ipa_2012_2024-main", "M3")
+
+# Caminhos internos
+base_dir  <- file.path(repo_dir, "1 - ESPACIAL")   # shapefiles SaTScan
+DIR_BASE  <- file.path(repo_dir, "2 - TEMPORAL")   # CSVs temporais
+
+# Pasta de saída local (criada no diretório de trabalho do usuário)
+out_dir   <- file.path(getwd(), "resultados_malaria")
+DIR_SAIDA <- file.path(out_dir, "Saida_Prais_Projetada")
+if (!dir.exists(DIR_SAIDA)) dir.create(DIR_SAIDA, recursive = TRUE)
+
+message("Repositório pronto. Iniciando análises...\n")
+
+# ==============================================================================
+# 0.1 PARÂMETROS
+# ==============================================================================
+
+K_IPA <- 1000
+
+# Pasta do ano -> rótulo do período
+periodos <- c(
+  "2016" = "2012–2016",
+  "2020" = "2017–2020",
+  "2024" = "2021–2024"
+)
+
+# Configuração das categorias — espacial
+config_espacial <- list(
+
+  sexo = list(
+    pasta    = "1 - SEXO",
+    subgrupos = c(
+      feminino  = "Feminino",
+      masculino = "Masculino"
+    )
+  ),
+
+  idade = list(
+    pasta    = "2 - IDADE",
+    subgrupos = c(
+      "0_4"   = "0 a 4 anos",
+      "5_19"  = "5 a 19 anos",
+      "20_39" = "20 a 39 anos",
+      "40_59" = "40 a 59 anos",
+      "60"    = "60 anos ou mais"
+    )
+  ),
+
+  cor = list(
+    pasta    = "3 - COR",
+    subgrupos = c(
+      amarela  = "Amarela",
+      branca   = "Branca",
+      indigena = "Indígena",
+      parda    = "Parda",
+      preta    = "Preta"
+    )
+  ),
+
+  escolaridade = list(
+    pasta    = "4 - ESCOLARIDADE",
+    subgrupos = c(
+      "1"     = "Sem escolaridade",
+      "1_3"   = "1 a 3 anos de estudo",
+      "4_7"   = "4 a 7 anos de estudo",
+      "8_10"  = "8 a 10 anos de estudo",
+      "11_14" = "11 a 14 anos de estudo",
+      "14"    = "14 anos ou mais"
+    )
+  )
+)
+
+# Configuração das categorias — temporal
+config_temporal <- list(
+  "1 - SEXO" = list(
+    pasta    = "1 - SEXO",
+    arquivos = c("ao_fem.csv", "ao_masc.csv"),
+    labels   = c("Feminino", "Masculino")
+  ),
+  "2 - IDADE" = list(
+    pasta    = "2 - IDADE",
+    arquivos = c("ao_0_4.csv","ao_5_19.csv","ao_20_39.csv","ao_40_59.csv","ao_60.csv"),
+    labels   = c("0-4 anos","5-19 anos","20-39 anos","40-59 anos","60 anos ou mais")
+  ),
+  "3 - COR" = list(
+    pasta    = "3 - COR",
+    arquivos = c("ao_amarela.csv","ao_branca.csv","ao_indigena.csv","ao_parda.csv","ao_preta.csv"),
+    labels   = c("Amarela","Branca","Indígena","Parda","Preta")
+  ),
+  "4 - ESCOLARIDADE" = list(
+    pasta    = "4 - ESCOLARIDADE",
+    arquivos = c("ao_1.csv","ao_1_3.csv","ao_4_7.csv","ao_8_10.csv","ao_11_14.csv","ao_14.csv"),
+    labels   = c("Sem instrução","1 a 3 anos","4 a 7 anos","8 a 10 anos","11 a 13 anos","14 anos ou mais")
+  )
+)
+
+# ==============================================================================
+# 1. DADOS IBGE
+# ==============================================================================
+
+mapa_ibge <- read_municipality(year = 2020, showProgress = FALSE)
+mapa_ao   <- mapa_ibge %>% filter(abbrev_state %in% c("AC", "AM", "RO", "RR"))
+
+estados_ibge <- read_state(year = 2020, showProgress = FALSE)
+estados_ao   <- estados_ibge %>% filter(abbrev_state %in% c("AC", "AM", "RO", "RR"))
+
+centroides_estados <- st_point_on_surface(estados_ao)
+
+# ==============================================================================
+# 2. PADRONIZAÇÃO DOS NOMES
+# ==============================================================================
+
+limpar_nome_perfeito <- function(texto) {
+  texto %>%
+    as.character() %>%
+    rm_accent() %>%
+    toupper() %>%
+    str_replace_all("'", "") %>%
+    str_replace_all("-", " ") %>%
+    str_replace_all("[^A-Z0-9 ]", "") %>%
+    str_replace_all("\\s+", " ") %>%
+    trimws()
+}
+
+mapa_ao$nome_chave <- limpar_nome_perfeito(mapa_ao$name_muni)
+
+colisoes <- mapa_ao %>% st_drop_geometry() %>% count(nome_chave) %>% filter(n > 1)
+if (nrow(colisoes) > 0) {
+  warning(sprintf("Colisão de nome_chave em %d caso(s): %s",
+                  nrow(colisoes), paste(colisoes$nome_chave, collapse = ", ")))
+}
+
+# ==============================================================================
+# 3. ESTRATOS E PALETA
+# ==============================================================================
+
+niveis_risco <- c(
+  "Risco Crítico (RR > 6.0)",
+  "Alto Risco (RR 2.0 a 6.0)",
+  "Risco Moderado (RR 1.0 a 2.0)",
+  "Sem aglomerado"
+)
+
+cores_verde <- c(
+  "Risco Crítico (RR > 6.0)"      = "#1e4620",
+  "Alto Risco (RR 2.0 a 6.0)"     = "#4caf50",
+  "Risco Moderado (RR 1.0 a 2.0)" = "#a5d6a7",
+  "Sem aglomerado"                 = "#ffffff"
+)
+
+# ==============================================================================
+# 4. PROCESSAMENTO DOS SHAPEFILES SATSCAN
+# ==============================================================================
+
+processar_satscan <- function(caminho_shp, mapa_base) {
+
+  if (!file.exists(caminho_shp)) stop("Shapefile inexistente: ", caminho_shp)
+
+  dados_scan <- st_read(caminho_shp, quiet = TRUE)
+  dados_scan$CLU_RR  <- as.numeric(as.character(dados_scan$CLU_RR))
+  dados_scan$P_VALUE <- as.numeric(as.character(dados_scan$P_VALUE))
+  dados_scan$nome_chave <- limpar_nome_perfeito(dados_scan$LOC_ID)
+
+  dados_scan_unicos <- dados_scan %>%
+    filter(P_VALUE <= 0.05) %>%
+    st_drop_geometry() %>%
+    group_by(nome_chave) %>%
+    slice_max(order_by = CLU_RR, n = 1, with_ties = FALSE) %>%
+    ungroup()
+
+  orfaos <- dados_scan_unicos %>%
+    anti_join(st_drop_geometry(mapa_base), by = "nome_chave")
+  if (nrow(orfaos) > 0) {
+    warning(sprintf("%d cluster(s) sem match na malha (%s): %s",
+                    nrow(orfaos), caminho_shp,
+                    paste(orfaos$nome_chave, collapse = ", ")))
+  }
+
+  mapa_final <- mapa_base %>%
+    left_join(dados_scan_unicos, by = "nome_chave") %>%
+    mutate(
+      Estrato_Risco = case_when(
+        is.na(CLU_RR) ~ "Sem aglomerado",
+        CLU_RR > 6.00 ~ "Risco Crítico (RR > 6.0)",
+        CLU_RR > 2.00 ~ "Alto Risco (RR 2.0 a 6.0)",
+        TRUE          ~ "Risco Moderado (RR 1.0 a 2.0)"
+      ),
+      Estrato_Risco = factor(Estrato_Risco, levels = niveis_risco)
+    )
+
+  if (nrow(mapa_final) != nrow(mapa_base))
+    stop("Erro crítico: o join alterou o número de municípios da malha base!")
+
+  return(mapa_final)
+}
+
+# ==============================================================================
+# 5. CONSTRUÇÃO DOS MAPAS
+# ==============================================================================
+
+criar_mapa <- function(dados, titulo = "") {
+  ggplot() +
+    geom_sf(data = dados, aes(fill = Estrato_Risco),
+            color = "#d0d0d0", linewidth = 0.03) +
+    geom_sf(data = estados_ao, fill = NA, color = "black", linewidth = 0.7) +
+    geom_sf_text(data = centroides_estados, aes(label = abbrev_state),
+                 size = 5.5, fontface = "bold", color = "#2c3e50") +
+    scale_fill_manual(values = cores_verde, drop = FALSE, name = "Estrato de risco") +
+    coord_sf(expand = FALSE) +
+    labs(subtitle = titulo) +
+    theme_void() +
+    theme(
+      legend.position  = "none",
+      plot.subtitle    = element_text(face = "bold", hjust = 0.5, size = 12),
+      plot.margin      = margin(1, 1, 1, 1, "mm"),
+      plot.background  = element_rect(fill = "transparent", color = NA),
+      panel.background = element_rect(fill = "transparent", color = NA)
+    )
+}
+
+# ==============================================================================
+# 6. EXPORTAR PAINEL
+# ==============================================================================
+
+salvar_painel <- function(lista_mapas, arquivo_saida, rotulos_subgrupos, rotulos_periodos) {
+
+  n_sub <- length(rotulos_subgrupos)
+  n_per <- length(rotulos_periodos)
+  stopifnot(length(lista_mapas) == n_sub * n_per)
+
+  largura    <- 20
+  altura     <- max(8, 6 * n_sub)
+  ncol_total <- n_per + 1
+  nrow_total <- n_sub + 1
+
+  grobs <- vector("list", ncol_total * nrow_total)
+  k <- 0
+
+  # Linha 1: cabeçalho
+  k <- k + 1; grobs[[k]] <- grid::nullGrob()
+  for (j in seq_len(n_per)) {
+    k <- k + 1
+    grobs[[k]] <- grid::textGrob(rotulos_periodos[j],
+                                 gp = grid::gpar(fontsize = 12, fontface = "bold"))
+  }
+
+  # Linhas seguintes: rótulo + mapas
+  for (i in seq_len(n_sub)) {
+    k <- k + 1
+    grobs[[k]] <- grid::textGrob(rotulos_subgrupos[i], rot = 90,
+                                 gp = grid::gpar(fontsize = 12, fontface = "bold"))
+    for (j in seq_len(n_per)) {
+      k <- k + 1
+      grobs[[k]] <- lista_mapas[[(i - 1) * n_per + j]]
+    }
+  }
+
+  larg_col <- grid::unit.c(grid::unit(1.5, "lines"),
+                            rep(grid::unit(1, "null"), n_per))
+  alt_lin  <- grid::unit.c(grid::unit(1.6, "lines"),
+                            rep(grid::unit(1, "null"), n_sub))
+
+  png(filename = arquivo_saida, width = largura, height = altura,
+      units = "cm", res = 600, bg = "transparent")
+  gridExtra::grid.arrange(grobs = grobs, ncol = ncol_total, nrow = nrow_total,
+                          widths = larg_col, heights = alt_lin)
+  dev.off()
+  message("  Painel salvo: ", arquivo_saida)
+}
+
+# ==============================================================================
+# 7. LOOP ESPACIAL
+# ==============================================================================
+
+message("\n====== ANÁLISE ESPACIAL ======\n")
+
+for (cat_nome in names(config_espacial)) {
+
+  cfg <- config_espacial[[cat_nome]]
+  cat("\n===", cfg$pasta, "===\n")
+
+  tryCatch({
+
+    mapas <- list()
+    for (sg in names(cfg$subgrupos)) {
+      for (ano in names(periodos)) {
+        caminho <- file.path(base_dir, cfg$pasta, sg, ano, "scan.gis.shp")
+        dados   <- processar_satscan(caminho, mapa_ao)
+        mapas[[length(mapas) + 1]] <- criar_mapa(dados, titulo = "")
+      }
+    }
+
+    arquivo_saida <- file.path(out_dir, paste0("Painel_", toupper(cat_nome), ".png"))
+
+    salvar_painel(
+      mapas, arquivo_saida,
+      rotulos_subgrupos = unname(cfg$subgrupos),
+      rotulos_periodos  = unname(periodos)
+    )
+
+  }, error = function(e) {
+    warning(sprintf("Falha em %s: %s", cfg$pasta, conditionMessage(e)))
+  })
+}
+
+# ==============================================================================
+# 8. ANÁLISE TEMPORAL — PRAIS-WINSTEN + PROJEÇÃO 2025–2030
+# ==============================================================================
+
+message("\n====== ANÁLISE TEMPORAL ======\n")
+
+tabela_prais <- data.frame()
+tabela_proj  <- data.frame()
+serie_hist   <- data.frame()
+serie_fut    <- data.frame()
+
+# Leitor de coluna numérica robusto a vírgula decimal
+num <- function(x) as.numeric(gsub(",", ".", gsub("\\s+", "", as.character(x))))
+
+for (cat in names(config_temporal)) {
+
+  cfg <- config_temporal[[cat]]
+  cat("\n==========", cat, "==========\n")
+
+  for (j in seq_along(cfg$arquivos)) {
+
+    caminho <- file.path(DIR_BASE, cfg$pasta, cfg$arquivos[j])
+    rot     <- cfg$labels[j]
+
+    if (!file.exists(caminho)) { cat("  [FALTA]", caminho, "\n"); next }
+
+    df <- read.csv(caminho, sep = ";", stringsAsFactors = FALSE)
+    names(df) <- tolower(trimws(names(df)))
+    if (!"casos" %in% names(df) && "valor" %in% names(df))
+      names(df)[names(df) == "valor"] <- "casos"
+    df <- df %>% mutate(ano = num(ano), casos = num(casos), pop = num(pop))
+
+    reg <- df %>%
+      filter(!is.na(ano), !is.na(casos), !is.na(pop)) %>%
+      group_by(ano) %>%
+      summarise(casos = sum(casos), pop = sum(pop), .groups = "drop") %>%
+      arrange(ano) %>%
+      filter(pop > 0) %>%
+      mutate(ipa = casos / pop * K_IPA)
+
+    if (nrow(reg) < 3) { cat("  [PULADO]", rot, "\n"); next }
+
+    cat(sprintf("  %-16s anos=%d  IPA [%.1f ; %.1f]\n",
+                rot, nrow(reg), min(reg$ipa), max(reg$ipa)))
+
+    # Prais-Winsten sobre log(ipa+1)
+    m  <- prais_winsten(log(ipa + 1) ~ ano, data = reg, index = "ano")
+    s  <- summary(m)
+    b  <- s$coefficients["ano", "Estimate"]
+    se <- s$coefficients["ano", "Std. Error"]
+    p  <- s$coefficients["ano", "Pr(>|t|)"]
+    gl <- s$df[2]; tc <- qt(0.975, gl)
+    bi <- b - tc * se; bs <- b + tc * se
+
+    vpa  <- (exp(b)  - 1) * 100
+    vpai <- (exp(bi) - 1) * 100
+    vpas <- (exp(bs) - 1) * 100
+    tend <- if (p > 0.05) "Estacionária" else if (b > 0) "Crescente" else "Decrescente"
+
+    tabela_prais <- bind_rows(tabela_prais, data.frame(
+      Categoria = cat, Subgrupo = rot,
+      VPA = round(vpa, 2),
+      IC95 = sprintf("[%.2f ; %.2f]", vpai, vpas),
+      p_valor = round(p, 4),
+      Tendencia = tend
+    ))
+
+    reg$ajustado <- exp(fitted(m)) - 1
+    reg$Subgrupo <- rot; reg$Categoria <- cat
+    serie_hist <- bind_rows(serie_hist, reg)
+
+    # Projeção ancorada no nível ajustado de 2024
+    anos_fut <- 2025:2030
+    h        <- anos_fut - max(reg$ano)
+    base_log <- log(tail(reg$ajustado, 1) + 1)
+
+    if (p < 0.05) {
+      pred <- exp(base_log + b  * h) - 1
+      lo   <- pmax(0, exp(base_log + bi * h) - 1)
+      hi   <- exp(base_log + bs * h) - 1
+    } else {
+      ult  <- tail(reg$ajustado, 1)
+      pred <- rep(ult, 6); lo <- pred; hi <- pred
+    }
+
+    serie_fut <- bind_rows(serie_fut, data.frame(
+      ano = anos_fut, ipa = pred, lo = lo, hi = hi,
+      Subgrupo = rot, Categoria = cat,
+      Projetado = ifelse(p < 0.05,
+                         "Tendência significativa",
+                         "Estacionária (nível mantido)")
+    ))
+
+    tabela_proj <- bind_rows(tabela_proj, data.frame(
+      Categoria = cat, Subgrupo = rot, Ano = anos_fut,
+      IPA_previsto = round(pred, 2),
+      IC_inf = round(lo, 2),
+      IC_sup = round(hi, 2)
+    ))
+  }
+}
+
+# Exporta tabelas
+write.csv2(tabela_prais, file.path(DIR_SAIDA, "Tabela_Prais_Regional.csv"),  row.names = FALSE)
+write.csv2(tabela_proj,  file.path(DIR_SAIDA, "Tabela_Projecao_2030.csv"),   row.names = FALSE)
+message("\nTabelas exportadas para: ", DIR_SAIDA)
+
+# ==============================================================================
+# 9. GRÁFICOS TEMPORAIS
+# ==============================================================================
+
+paletas <- list(
+  "1 - SEXO"        = c("#a5d6a7", "#1e4620"),
+  "2 - IDADE"       = c("#1e4620", "#388e3c", "#66bb6a", "#a5d6a7", "#2e7d32"),
+  "3 - COR"         = c("#2e7d32", "#66bb6a", "#a5d6a7", "#1b5e20", "#4caf50"),
+  "4 - ESCOLARIDADE"= c("#1e4620", "#66bb6a", "#a5d6a7", "#1b5e20", "#4caf50", "#81c784")
+)
+
+for (categoria in names(config_temporal)) {
+
+  rots <- config_temporal[[categoria]]$labels
+
+  h1 <- serie_hist %>%
+    filter(Categoria == categoria) %>%
+    transmute(ano, ipa = ajustado, Subgrupo, tipo = "Histórico (Prais)")
+
+  emenda <- h1 %>%
+    group_by(Subgrupo) %>%
+    filter(ano == max(ano)) %>%
+    ungroup() %>%
+    mutate(tipo = "Projeção (Prais)")
+
+  f1 <- serie_fut %>%
+    filter(Categoria == categoria) %>%
+    transmute(ano, ipa, lo, hi, Subgrupo, tipo = "Projeção (Prais)")
+
+  linha <- bind_rows(
+    h1     %>% mutate(lo = NA, hi = NA),
+    emenda %>% mutate(lo = NA, hi = NA),
+    f1
+  )
+  linha$Subgrupo <- factor(linha$Subgrupo, levels = rots)
+
+  g <- ggplot(linha, aes(ano, ipa, color = Subgrupo)) +
+    geom_ribbon(
+      data = subset(linha, tipo == "Projeção (Prais)" & !is.na(lo)),
+      aes(ymin = lo, ymax = hi, fill = Subgrupo),
+      alpha = 0.12, color = NA
+    ) +
+    geom_line(aes(linetype = tipo), linewidth = 1) +
+    scale_linetype_manual(
+      values = c("Histórico (Prais)" = "solid", "Projeção (Prais)" = "22"),
+      name = NULL
+    ) +
+    scale_color_manual(values = paletas[[categoria]], name = NULL) +
+    scale_fill_manual(values  = paletas[[categoria]], guide = "none") +
+    scale_y_continuous(transform = "log10") +
+    scale_x_continuous(breaks = seq(2012, 2030, 2)) +
+    geom_vline(xintercept = 2024.5, linetype = "dashed",
+               color = "grey50", alpha = 0.7) +
+    labs(x = "", y = "IPA por mil (escala log10)") +
+    theme_bw(base_size = 12) +
+    theme(
+      panel.grid    = element_blank(),
+      legend.position = "bottom",
+      legend.box    = "vertical",
+      legend.margin = margin(t = -5),
+      plot.title    = element_text(face = "bold", hjust = .5),
+      plot.subtitle = element_text(size = 9, hjust = .5, face = "italic"),
+      axis.text.x   = element_text(angle = 45, hjust = 1)
+    )
+
+  nome_graf <- paste0("Grafico_", sub(".* - ", "", categoria), "_2030.png")
+  ggsave(file.path(DIR_SAIDA, nome_graf), g,
+         width = 19, height = 12, units = "cm", dpi = 600)
+  message("  Gráfico salvo: ", nome_graf)
+}
+
+# ==============================================================================
+# 10. LIMPEZA
+# ==============================================================================
+
+unlink(tmp_zip)
+message("\n✓ CONCLUÍDO.")
+message("  Resultados em: ", normalizePath(out_dir))
+message("  Repositório de dados: https://github.com/romah-23/malaria_ipa_2012_2024")
