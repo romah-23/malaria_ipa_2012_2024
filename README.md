@@ -115,7 +115,7 @@ Pereira POB et al. Malária na Amazônia Ocidental: Dinâmica Espaço-Temporal
 e Desigualdades (2012–2024). Revista de Saúde Pública, 2026. [no prelo]
 ```
 
-DOI do repositório: [inserir após geração no Zenodo]
+DOI do repositório: [https://doi.org/10.5281/zenodo.20802388]
 
 ---
 
